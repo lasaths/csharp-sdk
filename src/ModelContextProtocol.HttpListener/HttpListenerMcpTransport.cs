@@ -15,7 +15,7 @@ namespace ModelContextProtocol.HttpListener;
 /// </summary>
 public sealed class HttpListenerMcpTransport : IServerTransport
 {
-    private readonly HttpListener _listener = new();
+    private readonly System.Net.HttpListener _listener = new();
     private readonly McpServerOptions _options;
     private readonly ILoggerFactory? _loggerFactory;
     private readonly IServiceProvider? _serviceProvider;
@@ -71,7 +71,15 @@ public sealed class HttpListenerMcpTransport : IServerTransport
             HttpListenerContext context;
             try
             {
+#if NETSTANDARD2_0
+                context = await _listener.GetContextAsync();
+                if (token.IsCancellationRequested)
+                {
+                    break;
+                }
+#else
                 context = await _listener.GetContextAsync().WaitAsync(token);
+#endif
             }
             catch (OperationCanceledException)
             {

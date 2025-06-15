@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using ModelContextProtocol.Protocol;
 using System.Text.Json;
+using McpGrasshopperPlugin.Widgets;
 
 namespace McpGrasshopperPlugin;
 
@@ -46,6 +47,7 @@ public class McpListenerComponent : GH_Component
             _cts = new CancellationTokenSource();
             _server.StartAsync(_cts.Token).Wait();
             _logs.Add($"Server started at {prefix}");
+            McpStatusWidget.ShowMessage("MCP server started");
         }
         else if (!on && _server != null)
         {
@@ -57,6 +59,7 @@ public class McpListenerComponent : GH_Component
             _cts?.Dispose();
             _cts = null;
             _logs.Add("Server stopped");
+            McpStatusWidget.ShowMessage("MCP server stopped");
         }
 
         da.SetDataList(0, _messages);
@@ -67,6 +70,7 @@ public class McpListenerComponent : GH_Component
     {
         _messages.Add(JsonSerializer.Serialize(msg, McpJsonUtilities.DefaultOptions.GetTypeInfo(typeof(JsonRpcMessage))));
         ExpireSolution(true);
+        McpStatusWidget.ShowMessage($"Received: {msg.Method}");
     }
 
     public override Guid ComponentGuid => new("6b8ec8b1-599f-4d5a-8244-e2d7f0a2ea76");

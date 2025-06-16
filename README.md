@@ -66,6 +66,37 @@ var result = await client.CallToolAsync(
 Console.WriteLine(result.Content.First(c => c.Type == "text").Text);
 ```
 
+### Using configuration
+
+If you're building your client with <code>IHost</code>, both
+<code>SseClientTransportOptions</code> and <code>McpClientOptions</code> can be
+bound from an <code>appsettings.json</code> file:
+
+```json
+{
+  "Mcp": {
+    "Client": {
+      "Transport": {
+        "Endpoint": "http://localhost:5000/mcp/stream",
+        "Name": "HttpListenerServer",
+        "TransportMode": "Sse"
+      }
+    }
+  }
+}
+```
+
+```csharp
+var configuration = new ConfigurationBuilder()
+    .AddJsonFile("appsettings.json")
+    .Build();
+
+var transportOptions =
+    configuration.GetSection("Mcp:Client:Transport").Get<SseClientTransportOptions>()!;
+await using var jsonConfiguredClient = await McpClientFactory.CreateAsync(
+    new SseClientTransport(transportOptions));
+```
+
 You can find samples demonstrating how to use ModelContextProtocol with an LLM SDK in the [samples](samples) directory, and also refer to the [tests](tests/ModelContextProtocol.Tests) project for more examples. Additional examples and documentation will be added as in the near future.
 
 Clients can connect to any MCP server, not just ones created using this library. The protocol is designed to be server-agnostic, so you can use this library to connect to any compliant server.

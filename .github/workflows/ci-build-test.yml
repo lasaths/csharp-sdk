@@ -64,8 +64,21 @@ jobs:
     - name: Build
       run: dotnet build --configuration ${{ matrix.configuration }}
 
+    - name: Build Grasshopper plugin
+      run: dotnet build src/McpGrasshopperPlugin/McpGrasshopperPlugin.csproj --configuration ${{ matrix.configuration }}
+
     - name: Pack
       run: dotnet pack --configuration ${{ matrix.configuration }}
+
+    - name: Pack Grasshopper plugin
+      run: dotnet pack src/McpGrasshopperPlugin/McpGrasshopperPlugin.csproj --configuration ${{ matrix.configuration }}
+
+    - name: Upload Grasshopper plugin artifact
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: grasshopper-plugin-${{ matrix.os }}-${{ matrix.configuration }}
+        path: src/McpGrasshopperPlugin/bin/${{ matrix.configuration }}/**/*.gha
 
     - name: Test
       run: >-

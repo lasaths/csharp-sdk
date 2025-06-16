@@ -86,6 +86,12 @@ jobs:
           --configuration Release
           --output "${{ github.workspace }}/artifacts/packages"
 
+      - name: Pack Grasshopper plugin
+        run: dotnet pack src/McpGrasshopperPlugin/McpGrasshopperPlugin.csproj
+          ${{ env.version_suffix_args }}
+          --configuration Release
+          --output "${{ github.workspace }}/artifacts/grasshopper"
+
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
@@ -147,8 +153,10 @@ jobs:
         uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
 
       - name: Upload release asset
-        run: gh release upload ${{ github.event.release.tag_name }}
-          ${{ github.workspace }}/build-artifacts/packages/*.*nupkg
+        run: |
+          gh release upload ${{ github.event.release.tag_name }} \
+            ${{ github.workspace }}/build-artifacts/packages/*.*nupkg \
+            ${{ github.workspace }}/build-artifacts/grasshopper/**/*.gha
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

@@ -23,10 +23,10 @@
   </PropertyGroup>
   
   <ItemGroup>
-    <PackageReference Include="Grasshopper" Version="8.0.23304.9001" ExcludeAssets="runtime" />
-    <PackageReference Include="RhinoCommon" Version="8.0.0" />
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-    <PackageReference Include="Svg" Version="3.4.7" />
+    <PackageReference Include="Grasshopper" ExcludeAssets="runtime" />
+    <PackageReference Include="RhinoCommon" />
+    <PackageReference Include="Newtonsoft.Json" />
+    <PackageReference Include="Svg" />
   </ItemGroup>
 
   <ItemGroup>
@@ -50,9 +50,9 @@
     <!-- <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" /> -->
     
     <!-- Rhino 8.10 and earlier -->
-    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" ExcludeAssets="all" GeneratePathProperty="true" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" ExcludeAssets="all" GeneratePathProperty="true" />
     <Reference Include="$(PkgMicrosoft_NETFramework_ReferenceAssemblies_net48)\build\.NETFramework\v4.8\System.Windows.Forms.dll" Private="False" />
-    <PackageReference Include="System.Drawing.Common" Version="7.0.0" ExcludeAssets="runtime" />
+    <PackageReference Include="System.Drawing.Common" ExcludeAssets="runtime" />
   </ItemGroup>
 
 </Project>

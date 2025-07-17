@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Protocol;
 using System.Collections.Concurrent;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
 using System.Text;
@@ -64,8 +65,8 @@ internal sealed class AIFunctionMcpServerResource : McpServerResource
         return Create(
             AIFunctionFactory.Create(method, args =>
             {
-                var request = (RequestContext<ReadResourceRequestParams>)args.Context![typeof(RequestContext<ReadResourceRequestParams>)]!;
-                return createTargetFunc(request);
+                Debug.Assert(args.Services is RequestServiceProvider<ReadResourceRequestParams>, $"The service provider should be a {nameof(RequestServiceProvider<ReadResourceRequestParams>)} for this method to work correctly.");
+                return createTargetFunc(((RequestServiceProvider<ReadResourceRequestParams>)args.Services!).Request);
             }, CreateAIFunctionFactoryOptions(method, options)),
             options);
     }
@@ -74,61 +75,22 @@ internal sealed class AIFunctionMcpServerResource : McpServerResource
         MethodInfo method, McpServerResourceCreateOptions? options) =>
         new()
         {
-            Name = options?.Name ?? method.GetCustomAttribute<McpServerResourceAttribute>()?.Name,
+            Name = options?.Name ?? method.GetCustomAttribute<McpServerResourceAttribute>()?.Name ?? AIFunctionMcpServerTool.DeriveName(method),
             Description = options?.Description,
             MarshalResult = static (result, _, cancellationToken) => new ValueTask<object?>(result),
             SerializerOptions = options?.SerializerOptions ?? McpJsonUtilities.DefaultOptions,
             JsonSchemaCreateOptions = options?.SchemaCreateOptions,
             ConfigureParameterBinding = pi =>
             {
-                if (pi.ParameterType == typeof(RequestContext<ReadResourceRequestParams>))
-                {
-                    return new()
-                    {
-                        ExcludeFromSchema = true,
-                        BindParameter = (pi, args) => GetRequestContext(args),
-                    };
-                }
-
-                if (pi.ParameterType == typeof(IMcpServer))
-                {
-                    return new()
-                    {
-                        ExcludeFromSchema = true,
-                        BindParameter = (pi, args) => GetRequestContext(args)?.Server,
-                    };
-                }
-
-                if (pi.ParameterType == typeof(IProgress<ProgressNotificationValue>))
-                {
-                    // Bind IProgress<ProgressNotificationValue> to the progress token in the request,
-                    // if there is one. If we can't get one, return a nop progress.
-                    return new()
-                    {
-                        ExcludeFromSchema = true,
-                        BindParameter = (pi, args) =>
-                        {
-                            var requestContent = GetRequestContext(args);
-                            if (requestContent?.Server is { } server &&
-                                requestContent?.Params?.Meta?.ProgressToken is { } progressToken)
-                            {
-                                return new TokenProgress(server, progressToken);
-                            }
-
-                            return NullProgress.Instance;
-                        },
-                    };
-                }
-
-                if (options?.Services is { } services &&
-                    services.GetService<IServiceProviderIsService>() is { } ispis &&
-                    ispis.IsService(pi.ParameterType))
+                if (RequestServiceProvider<ReadResourceRequestParams>.IsAugmentedWith(pi.ParameterType) ||
+                    (options?.Services?.GetService<IServiceProviderIsService>() is { } ispis &&
+                     ispis.IsService(pi.ParameterType)))
                 {
                     return new()
                     {
                         ExcludeFromSchema = true,
                         BindParameter = (pi, args) =>
-                            GetRequestContext(args)?.Services?.GetService(pi.ParameterType) ??
+                            args.Services?.GetService(pi.ParameterType) ??
                             (pi.HasDefaultValue ? null :
                              throw new ArgumentException("No service of the requested type was found.")),
                     };
@@ -140,7 +102,7 @@ internal sealed class AIFunctionMcpServerResource : McpServerResource
                     {
                         ExcludeFromSchema = true,
                         BindParameter = (pi, args) =>
-                            (GetRequestContext(args)?.Services as IKeyedServiceProvider)?.GetKeyedService(pi.ParameterType, keyedAttr.Key) ??
+                            (args?.Services as IKeyedServiceProvider)?.GetKeyedService(pi.ParameterType, keyedAttr.Key) ??
                             (pi.HasDefaultValue ? null :
                              throw new ArgumentException("No service of the requested type was found.")),
                     };
@@ -172,17 +134,6 @@ internal sealed class AIFunctionMcpServerResource : McpServerResource
                 }
 
                 return default;
-
-                static RequestContext<ReadResourceRequestParams>? GetRequestContext(AIFunctionArguments args)
-                {
-                    if (args.Context?.TryGetValue(typeof(RequestContext<ReadResourceRequestParams>), out var rc) is true &&
-                        rc is RequestContext<ReadResourceRequestParams> requestContext)
-                    {
-                        return requestContext;
-                    }
-
-                    return null;
-                }
             },
         };
 
@@ -262,8 +213,9 @@ internal sealed class AIFunctionMcpServerResource : McpServerResource
         {
             UriTemplate = options?.UriTemplate ?? DeriveUriTemplate(name, function),
             Name = name,
+            Title = options?.Title,
             Description = options?.Description,
-            MimeType = options?.MimeType,
+            MimeType = options?.MimeType ?? "application/octet-stream",
         };
 
         return new AIFunctionMcpServerResource(function, resource);
@@ -277,6 +229,7 @@ internal sealed class AIFunctionMcpServerResource : McpServerResource
         {
             newOptions.UriTemplate ??= resourceAttr.UriTemplate;
             newOptions.Name ??= resourceAttr.Name;
+            newOptions.Title ??= resourceAttr.Title;
             newOptions.MimeType ??= resourceAttr.MimeType;
         }
 
@@ -293,7 +246,7 @@ internal sealed class AIFunctionMcpServerResource : McpServerResource
     {
         StringBuilder template = new();
 
-        template.Append("resource://").Append(Uri.EscapeDataString(name));
+        template.Append("resource://mcp/").Append(Uri.EscapeDataString(name));
 
         if (function.JsonSchema.TryGetProperty("properties", out JsonElement properties))
         {
@@ -357,17 +310,14 @@ internal sealed class AIFunctionMcpServerResource : McpServerResource
                 return null;
             }
         }
-        else if (request.Params.Uri != ProtocolResource!.Uri)
+        else if (!UriTemplate.UriTemplateComparer.Instance.Equals(request.Params.Uri, ProtocolResource!.Uri))
         {
             return null;
         }
 
         // Build up the arguments for the AIFunction call, including all of the name/value pairs from the URI.
-        AIFunctionArguments arguments = new()
-        {
-            Services = request.Services,
-            Context = new Dictionary<object, object?>() { [typeof(RequestContext<ReadResourceRequestParams>)] = request }
-        };
+        request.Services = new RequestServiceProvider<ReadResourceRequestParams>(request, request.Services);
+        AIFunctionArguments arguments = new() { Services = request.Services };
 
         // For templates, populate the arguments from the URI template.
         if (match is not null)
@@ -396,17 +346,17 @@ internal sealed class AIFunctionMcpServerResource : McpServerResource
 
             TextContent tc => new()
             {
-                Contents = [new TextResourceContents() { Uri = request.Params!.Uri, MimeType = ProtocolResourceTemplate.MimeType, Text = tc.Text }],
+                Contents = [new TextResourceContents { Uri = request.Params!.Uri, MimeType = ProtocolResourceTemplate.MimeType, Text = tc.Text }],
             },
 
             DataContent dc => new()
             {
-                Contents = [new BlobResourceContents() { Uri = request.Params!.Uri, MimeType = dc.MediaType, Blob = dc.Base64Data.ToString() }],
+                Contents = [new BlobResourceContents { Uri = request.Params!.Uri, MimeType = dc.MediaType, Blob = dc.Base64Data.ToString() }],
             },
 
             string text => new()
             {
-                Contents = [new TextResourceContents() { Uri = request.Params!.Uri, MimeType = ProtocolResourceTemplate.MimeType, Text = text }],
+                Contents = [new TextResourceContents { Uri = request.Params!.Uri, MimeType = ProtocolResourceTemplate.MimeType, Text = text }],
             },
 
             IEnumerable<ResourceContents> contents => new()
@@ -419,14 +369,14 @@ internal sealed class AIFunctionMcpServerResource : McpServerResource
                 Contents = aiContents.Select<AIContent, ResourceContents>(
                     ac => ac switch
                     {
-                        TextContent tc => new TextResourceContents()
+                        TextContent tc => new TextResourceContents
                         {
                             Uri = request.Params!.Uri,
                             MimeType = ProtocolResourceTemplate.MimeType,
                             Text = tc.Text
                         },
 
-                        DataContent dc => new BlobResourceContents()
+                        DataContent dc => new BlobResourceContents
                         {
                             Uri = request.Params!.Uri,
                             MimeType = dc.MediaType,
@@ -439,7 +389,7 @@ internal sealed class AIFunctionMcpServerResource : McpServerResource
 
             IEnumerable<string> strings => new()
             {
-                Contents = strings.Select<string, ResourceContents>(text => new TextResourceContents()
+                Contents = strings.Select<string, ResourceContents>(text => new TextResourceContents
                 {
                     Uri = request.Params!.Uri,
                     MimeType = ProtocolResourceTemplate.MimeType,

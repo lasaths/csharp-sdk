@@ -218,9 +218,9 @@ public class StreamableHttpServerConformanceTests(ITestOutputHelper outputHelper
         var response = await HttpClient.PostAsync("", JsonContent(CallTool("throw")), TestContext.Current.CancellationToken);
         var rpcError = await AssertSingleSseResponseAsync(response);
 
-        var error = AssertType<CallToolResponse>(rpcError.Result);
+        var error = AssertType<CallToolResult>(rpcError.Result);
         var content = Assert.Single(error.Content);
-        Assert.Contains("'throw'", content.Text);
+        Assert.Contains("'throw'", Assert.IsType<TextContentBlock>(content).Text);
     }
 
     [Fact]
@@ -371,16 +371,15 @@ public class StreamableHttpServerConformanceTests(ITestOutputHelper outputHelper
             if (currentSseItem <= 10)
             {
                 var notification = JsonSerializer.Deserialize(sseEvent, GetJsonTypeInfo<JsonRpcNotification>());
-                var progressNotification = AssertType<ProgressNotification>(notification?.Params);
+                var progressNotification = AssertType<ProgressNotificationParams>(notification?.Params);
                 Assert.Equal($"Progress {currentSseItem - 1}", progressNotification.Progress.Message);
             }
             else
             {
                 var rpcResponse = JsonSerializer.Deserialize(sseEvent, GetJsonTypeInfo<JsonRpcResponse>());
-                var callToolResponse = AssertType<CallToolResponse>(rpcResponse?.Result);
+                var callToolResponse = AssertType<CallToolResult>(rpcResponse?.Result);
                 var callToolContent = Assert.Single(callToolResponse.Content);
-                Assert.Equal("text", callToolContent.Type);
-                Assert.Equal("done", callToolContent.Text);
+                Assert.Equal("done", Assert.IsType<TextContentBlock>(callToolContent).Text);
             }
         }
 
@@ -388,7 +387,7 @@ public class StreamableHttpServerConformanceTests(ITestOutputHelper outputHelper
     }
 
     [Fact]
-    public async Task AsyncLocalSetInRunSessionHandlerCallback_Flows_ToAllToolCalls()
+    public async Task AsyncLocalSetInRunSessionHandlerCallback_Flows_ToAllToolCalls_IfPerSessionExecutionContextEnabled()
     {
         var asyncLocal = new AsyncLocal<string>();
         var totalSessionCount = 0;
@@ -396,6 +395,7 @@ public class StreamableHttpServerConformanceTests(ITestOutputHelper outputHelper
         Builder.Services.AddMcpServer()
             .WithHttpTransport(options =>
             {
+                options.PerSessionExecutionContext = true;
                 options.RunSessionHandler = async (httpContext, mcpServer, cancellationToken) =>
                 {
                     asyncLocal.Value = $"RunSessionHandler ({totalSessionCount++})";
@@ -413,10 +413,9 @@ public class StreamableHttpServerConformanceTests(ITestOutputHelper outputHelper
         {
             var response = await HttpClient.PostAsync("", JsonContent(CallTool("async-local-session")), TestContext.Current.CancellationToken);
             var rpcResponse = await AssertSingleSseResponseAsync(response);
-            var callToolResponse = AssertType<CallToolResponse>(rpcResponse.Result);
+            var callToolResponse = AssertType<CallToolResult>(rpcResponse.Result);
             var callToolContent = Assert.Single(callToolResponse.Content);
-            Assert.Equal("text", callToolContent.Type);
-            Assert.Equal($"RunSessionHandler ({expectedSessionIndex})", callToolContent.Text);
+            Assert.Equal($"RunSessionHandler ({expectedSessionIndex})", Assert.IsType<TextContentBlock>(callToolContent).Text);
         }
 
         await CallAsyncLocalToolAndValidateAsync(expectedSessionIndex: 0);
@@ -527,7 +526,7 @@ public class StreamableHttpServerConformanceTests(ITestOutputHelper outputHelper
 
     private static T AssertType<T>(JsonNode? jsonNode)
     {
-        var type = JsonSerializer.Deserialize<T>(jsonNode, GetJsonTypeInfo<T>());
+        var type = JsonSerializer.Deserialize(jsonNode, GetJsonTypeInfo<T>());
         Assert.NotNull(type);
         return type;
     }
@@ -603,12 +602,11 @@ public class StreamableHttpServerConformanceTests(ITestOutputHelper outputHelper
         return initializeResult;
     }
 
-    private static CallToolResponse AssertEchoResponse(JsonRpcResponse rpcResponse)
+    private static CallToolResult AssertEchoResponse(JsonRpcResponse rpcResponse)
     {
-        var callToolResponse = AssertType<CallToolResponse>(rpcResponse.Result);
+        var callToolResponse = AssertType<CallToolResult>(rpcResponse.Result);
         var callToolContent = Assert.Single(callToolResponse.Content);
-        Assert.Equal("text", callToolContent.Type);
-        Assert.Equal($"Hello world! ({rpcResponse.Id})", callToolContent.Text);
+        Assert.Equal($"Hello world! ({rpcResponse.Id})", Assert.IsType<TextContentBlock>(callToolContent).Text);
         return callToolResponse;
     }
 

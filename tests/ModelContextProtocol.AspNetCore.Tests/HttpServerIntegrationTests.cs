@@ -94,8 +94,8 @@ public abstract class HttpServerIntegrationTests : LoggedTest, IClassFixture<Sse
 
         // assert
         Assert.NotNull(result);
-        Assert.False(result.IsError);
-        var textContent = Assert.Single(result.Content, c => c.Type == "text");
+        Assert.Null(result.IsError);
+        var textContent = Assert.Single(result.Content.OfType<TextContentBlock>());
         Assert.Equal("Echo: Hello MCP!", textContent.Text);
     }
 
@@ -115,13 +115,13 @@ public abstract class HttpServerIntegrationTests : LoggedTest, IClassFixture<Sse
         Assert.NotNull(result2);
         Assert.NotNull(result3);
 
-        Assert.False(result1.IsError);
-        Assert.False(result2.IsError);
-        Assert.False(result3.IsError);
-        
-        var textContent1 = Assert.Single(result1.Content);
-        var textContent2 = Assert.Single(result2.Content);
-        var textContent3 = Assert.Single(result3.Content);
+        Assert.Null(result1.IsError);
+        Assert.Null(result2.IsError);
+        Assert.Null(result3.IsError);
+
+        var textContent1 = Assert.Single(result1.Content.OfType<TextContentBlock>());
+        var textContent2 = Assert.Single(result2.Content.OfType<TextContentBlock>());
+        var textContent3 = Assert.Single(result3.Content.OfType<TextContentBlock>());
 
         Assert.NotNull(textContent1.Text);
         Assert.Equal(textContent1.Text, textContent2.Text);
@@ -259,11 +259,7 @@ public abstract class HttpServerIntegrationTests : LoggedTest, IClassFixture<Sse
             {
                 Model = "test-model",
                 Role = Role.Assistant,
-                Content = new Content
-                {
-                    Type = "text",
-                    Text = "Test response"
-                }
+                Content = new TextContentBlock { Text = "Test response" },
             };
         };
         await using var client = await GetClientAsync(options);
@@ -271,16 +267,15 @@ public abstract class HttpServerIntegrationTests : LoggedTest, IClassFixture<Sse
 
         // Call the server's sampleLLM tool which should trigger our sampling handler
         var result = await client.CallToolAsync("sampleLLM", new Dictionary<string, object?>
-            {
-                ["prompt"] = "Test prompt",
-                ["maxTokens"] = 100
-            },
+        {
+            ["prompt"] = "Test prompt",
+            ["maxTokens"] = 100
+        },
             cancellationToken: TestContext.Current.CancellationToken);
 
         // assert
         Assert.NotNull(result);
-        var textContent = Assert.Single(result.Content);
-        Assert.Equal("text", textContent.Type);
+        var textContent = Assert.Single(result.Content.OfType<TextContentBlock>());
         Assert.False(string.IsNullOrEmpty(textContent.Text));
     }
 
@@ -293,7 +288,7 @@ public abstract class HttpServerIntegrationTests : LoggedTest, IClassFixture<Sse
         for (int i = 0; i < 4; i++)
         {
             var client = (i % 2 == 0) ? client1 : client2;
-            var result =  await client.CallToolAsync(
+            var result = await client.CallToolAsync(
                 "echo",
                 new Dictionary<string, object?>
                 {
@@ -303,8 +298,8 @@ public abstract class HttpServerIntegrationTests : LoggedTest, IClassFixture<Sse
             );
 
             Assert.NotNull(result);
-            Assert.False(result.IsError);
-            var textContent = Assert.Single(result.Content, c => c.Type == "text");
+            Assert.Null(result.IsError);
+            var textContent = Assert.Single(result.Content.OfType<TextContentBlock>());
             Assert.Equal($"Echo: Hello MCP! {i}", textContent.Text);
         }
     }

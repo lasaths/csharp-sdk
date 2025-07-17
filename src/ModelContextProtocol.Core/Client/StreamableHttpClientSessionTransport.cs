@@ -6,12 +6,6 @@ using System.Text.Json;
 using ModelContextProtocol.Protocol;
 using System.Threading.Channels;
 
-#if NET
-using System.Net.Http.Json;
-#else
-using System.Text;
-#endif
-
 namespace ModelContextProtocol.Client;
 
 /// <summary>
@@ -22,17 +16,21 @@ internal sealed partial class StreamableHttpClientSessionTransport : TransportBa
     private static readonly MediaTypeWithQualityHeaderValue s_applicationJsonMediaType = new("application/json");
     private static readonly MediaTypeWithQualityHeaderValue s_textEventStreamMediaType = new("text/event-stream");
 
-    private readonly HttpClient _httpClient;
+    private readonly McpHttpClient _httpClient;
     private readonly SseClientTransportOptions _options;
     private readonly CancellationTokenSource _connectionCts;
     private readonly ILogger _logger;
 
+    private string? _negotiatedProtocolVersion;
     private Task? _getReceiveTask;
+
+    private readonly SemaphoreSlim _disposeLock = new(1, 1);
+    private bool _disposed;
 
     public StreamableHttpClientSessionTransport(
         string endpointName,
         SseClientTransportOptions transportOptions,
-        HttpClient httpClient,
+        McpHttpClient httpClient,
         Channel<JsonRpcMessage>? messageChannel,
         ILoggerFactory? loggerFactory)
         : base(endpointName, messageChannel, loggerFactory)
@@ -65,28 +63,17 @@ internal sealed partial class StreamableHttpClientSessionTransport : TransportBa
         using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _connectionCts.Token);
         cancellationToken = sendCts.Token;
 
-#if NET
-        using var content = JsonContent.Create(message, McpJsonUtilities.JsonContext.Default.JsonRpcMessage);
-#else
-        using var content = new StringContent(
-            JsonSerializer.Serialize(message, McpJsonUtilities.JsonContext.Default.JsonRpcMessage),
-            Encoding.UTF8,
-            "application/json; charset=utf-8"
-        );
-#endif
-
         using var httpRequestMessage = new HttpRequestMessage(HttpMethod.Post, _options.Endpoint)
         {
-            Content = content,
             Headers =
             {
                 Accept = { s_applicationJsonMediaType, s_textEventStreamMediaType },
             },
         };
 
-        CopyAdditionalHeaders(httpRequestMessage.Headers, _options.AdditionalHeaders, SessionId);
+        CopyAdditionalHeaders(httpRequestMessage.Headers, _options.AdditionalHeaders, SessionId, _negotiatedProtocolVersion);
 
-        var response = await _httpClient.SendAsync(httpRequestMessage, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        var response = await _httpClient.SendAsync(httpRequestMessage, message, cancellationToken).ConfigureAwait(false);
 
         // We'll let the caller decide whether to throw or fall back given an unsuccessful response.
         if (!response.IsSuccessStatusCode)
@@ -118,13 +105,16 @@ internal sealed partial class StreamableHttpClientSessionTransport : TransportBa
             throw new McpException($"Streamable HTTP POST response completed without a reply to request with ID: {rpcRequest.Id}");
         }
 
-        if (rpcRequest.Method == RequestMethods.Initialize && rpcResponseOrError is JsonRpcResponse)
+        if (rpcRequest.Method == RequestMethods.Initialize && rpcResponseOrError is JsonRpcResponse initResponse)
         {
-            // We've successfully initialized! Copy session-id and start GET request if any.
-            if (response.Headers.TryGetValues("mcp-session-id", out var sessionIdValues))
+            // We've successfully initialized! Copy session-id and protocol version, then start GET request if any.
+            if (response.Headers.TryGetValues("Mcp-Session-Id", out var sessionIdValues))
             {
                 SessionId = sessionIdValues.FirstOrDefault();
             }
+
+            var initializeResult = JsonSerializer.Deserialize(initResponse.Result, McpJsonUtilities.JsonContext.Default.InitializeResult);
+            _negotiatedProtocolVersion = initializeResult?.ProtocolVersion;
 
             _getReceiveTask = ReceiveUnsolicitedMessagesAsync();
         }
@@ -134,12 +124,26 @@ internal sealed partial class StreamableHttpClientSessionTransport : TransportBa
 
     public override async ValueTask DisposeAsync()
     {
+        using var _ = await _disposeLock.LockAsync().ConfigureAwait(false);
+
+        if (_disposed)
+        {
+            return;
+        }
+        _disposed = true;
+
         try
         {
             await _connectionCts.CancelAsync().ConfigureAwait(false);
 
             try
             {
+                // Send DELETE request to terminate the session. Only send if we have a session ID, per MCP spec.
+                if (!string.IsNullOrEmpty(SessionId))
+                {
+                    await SendDeleteRequest();
+                }
+
                 if (_getReceiveTask != null)
                 {
                     await _getReceiveTask.ConfigureAwait(false);
@@ -169,9 +173,9 @@ internal sealed partial class StreamableHttpClientSessionTransport : TransportBa
         // Send a GET request to handle any unsolicited messages not sent over a POST response.
         using var request = new HttpRequestMessage(HttpMethod.Get, _options.Endpoint);
         request.Headers.Accept.Add(s_textEventStreamMediaType);
-        CopyAdditionalHeaders(request.Headers, _options.AdditionalHeaders, SessionId);
+        CopyAdditionalHeaders(request.Headers, _options.AdditionalHeaders, SessionId, _negotiatedProtocolVersion);
 
-        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, _connectionCts.Token).ConfigureAwait(false);
+        using var response = await _httpClient.SendAsync(request, message: null, _connectionCts.Token).ConfigureAwait(false);
 
         if (!response.IsSuccessStatusCode)
         {
@@ -232,6 +236,22 @@ internal sealed partial class StreamableHttpClientSessionTransport : TransportBa
         return null;
     }
 
+    private async Task SendDeleteRequest()
+    {
+        using var deleteRequest = new HttpRequestMessage(HttpMethod.Delete, _options.Endpoint);
+        CopyAdditionalHeaders(deleteRequest.Headers, _options.AdditionalHeaders, SessionId, _negotiatedProtocolVersion);
+
+        try
+        {
+            // Do not validate we get a successful status code, because server support for the DELETE request is optional
+            (await _httpClient.SendAsync(deleteRequest, message: null, CancellationToken.None).ConfigureAwait(false)).Dispose();
+        }
+        catch (Exception ex)
+        {
+            LogTransportShutdownFailed(Name, ex);
+        }
+    }
+
     private void LogJsonException(JsonException ex, string data)
     {
         if (_logger.IsEnabled(LogLevel.Trace))
@@ -244,11 +264,20 @@ internal sealed partial class StreamableHttpClientSessionTransport : TransportBa
         }
     }
 
-    internal static void CopyAdditionalHeaders(HttpRequestHeaders headers, Dictionary<string, string>? additionalHeaders, string? sessionId = null)
+    internal static void CopyAdditionalHeaders(
+        HttpRequestHeaders headers,
+        IDictionary<string, string>? additionalHeaders,
+        string? sessionId,
+        string? protocolVersion)
     {
         if (sessionId is not null)
         {
-            headers.Add("mcp-session-id", sessionId);
+            headers.Add("Mcp-Session-Id", sessionId);
+        }
+
+        if (protocolVersion is not null)
+        {
+            headers.Add("MCP-Protocol-Version", protocolVersion);
         }
 
         if (additionalHeaders is null)

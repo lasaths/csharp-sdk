@@ -3,6 +3,7 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using ModelContextProtocol.Tests.Utils;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -15,6 +16,9 @@ public class McpServerTests : LoggedTest
     public McpServerTests(ITestOutputHelper testOutputHelper)
         : base(testOutputHelper)
     {
+#if !NET
+        Assert.SkipWhen(RuntimeInformation.IsOSPlatform(OSPlatform.Windows), "https://github.com/modelcontextprotocol/csharp-sdk/issues/587");
+#endif
         _options = CreateOptions();
     }
 
@@ -212,6 +216,7 @@ public class McpServerTests : LoggedTest
     [Fact]
     public async Task Can_Handle_Initialize_Requests()
     {
+        AssemblyName expectedAssemblyName = (Assembly.GetEntryAssembly() ?? typeof(IMcpServer).Assembly).GetName();
         await Can_Handle_Requests(
             serverCapabilities: null,
             method: RequestMethods.Initialize,
@@ -220,8 +225,8 @@ public class McpServerTests : LoggedTest
             {
                 var result = JsonSerializer.Deserialize<InitializeResult>(response, McpJsonUtilities.DefaultOptions);
                 Assert.NotNull(result);
-                Assert.Equal("ModelContextProtocol.Tests", result.ServerInfo.Name);
-                Assert.Equal("1.0.0.0", result.ServerInfo.Version);
+                Assert.Equal(expectedAssemblyName.Name, result.ServerInfo.Name);
+                Assert.Equal(expectedAssemblyName.Version?.ToString() ?? "1.0.0", result.ServerInfo.Version);
                 Assert.Equal("2024", result.ProtocolVersion);
             });
     }
@@ -474,9 +479,9 @@ public class McpServerTests : LoggedTest
                 {
                     CallToolHandler = async (request, ct) =>
                     {
-                        return new CallToolResponse
+                        return new CallToolResult
                         {
-                            Content = [new Content { Text = "test" }]
+                            Content = [new TextContentBlock { Text = "test" }]
                         };
                     },
                     ListToolsHandler = (request, ct) => throw new NotImplementedException(),
@@ -486,10 +491,10 @@ public class McpServerTests : LoggedTest
             configureOptions: null,
             assertResult: response =>
             {
-                var result = JsonSerializer.Deserialize<CallToolResponse>(response, McpJsonUtilities.DefaultOptions);
+                var result = JsonSerializer.Deserialize<CallToolResult>(response, McpJsonUtilities.DefaultOptions);
                 Assert.NotNull(result);
                 Assert.NotEmpty(result.Content);
-                Assert.Equal("test", result.Content[0].Text);
+                Assert.Equal("test", Assert.IsType<TextContentBlock>(result.Content[0]).Text);
             });
     }
 
@@ -518,10 +523,10 @@ public class McpServerTests : LoggedTest
         };
 
         await transport.SendMessageAsync(
-        new JsonRpcRequest
-        {
-            Method = method,
-            Id = new RequestId(55)
+            new JsonRpcRequest
+            {
+                Method = method,
+                Id = new RequestId(55)
         }
         );
 
@@ -586,7 +591,7 @@ public class McpServerTests : LoggedTest
         await using var transport = new TestServerTransport();
         await using var server = McpServerFactory.Create(transport, _options, LoggerFactory);
 
-        var logNotification = new JsonRpcNotification()
+        var logNotification = new JsonRpcNotification
         {
             Method = NotificationMethods.LoggingMessageNotification
         };
@@ -630,12 +635,12 @@ public class McpServerTests : LoggedTest
             Assert.Equal($"You are a helpful assistant.{Environment.NewLine}More system stuff.", rp.SystemPrompt);
 
             Assert.Equal(2, rp.Messages.Count);
-            Assert.Equal("I am going to France.", rp.Messages[0].Content.Text);
-            Assert.Equal("What is the most famous tower in Paris?", rp.Messages[1].Content.Text);
+            Assert.Equal("I am going to France.", Assert.IsType<TextContentBlock>(rp.Messages[0].Content).Text);
+            Assert.Equal("What is the most famous tower in Paris?", Assert.IsType<TextContentBlock>(rp.Messages[1].Content).Text);
 
             CreateMessageResult result = new()
             {
-                Content = new() { Text = "The Eiffel Tower.", Type = "text" },
+                Content = new TextContentBlock { Text = "The Eiffel Tower." },
                 Model = "amazingmodel",
                 Role = Role.Assistant,
                 StopReason = "endTurn",
@@ -685,7 +690,7 @@ public class McpServerTests : LoggedTest
         await transport.SendMessageAsync(new JsonRpcNotification
         {
             Method = NotificationMethods.ProgressNotification,
-            Params = JsonSerializer.SerializeToNode(new ProgressNotification
+            Params = JsonSerializer.SerializeToNode(new ProgressNotificationParams
             {
                 ProgressToken = new("abc"),
                 Progress = new()
@@ -698,7 +703,7 @@ public class McpServerTests : LoggedTest
         }, TestContext.Current.CancellationToken);
 
         var notification = await notificationReceived.Task;
-        var progress = JsonSerializer.Deserialize<ProgressNotification>(notification.Params, McpJsonUtilities.DefaultOptions);
+        var progress = JsonSerializer.Deserialize<ProgressNotificationParams>(notification.Params, McpJsonUtilities.DefaultOptions);
         Assert.NotNull(progress);
         Assert.Equal("abc", progress.ProgressToken.ToString());
         Assert.Equal(50, progress.Progress.Progress);

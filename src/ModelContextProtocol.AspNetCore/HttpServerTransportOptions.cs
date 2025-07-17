@@ -6,7 +6,7 @@ namespace ModelContextProtocol.AspNetCore;
 /// <summary>
 /// Configuration options for <see cref="M:McpEndpointRouteBuilderExtensions.MapMcp"/>.
 /// which implements the Streaming HTTP transport for the Model Context Protocol.
-/// See the protocol specification for details on the Streamable HTTP transport. <see href="https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http"/>
+/// See the protocol specification for details on the Streamable HTTP transport. <see href="https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http"/>
 /// </summary>
 public class HttpServerTransportOptions
 {
@@ -28,12 +28,26 @@ public class HttpServerTransportOptions
     /// </summary>
     /// <remarks>
     /// If <see langword="true"/>, the "/sse" endpoint will be disabled, and client information will be round-tripped as part
-    /// of the "mcp-session-id" header instead of stored in memory. Unsolicited server-to-client messages and all server-to-client
+    /// of the "MCP-Session-Id" header instead of stored in memory. Unsolicited server-to-client messages and all server-to-client
     /// requests are also unsupported, because any responses may arrive at another ASP.NET Core application process.
     /// Client sampling and roots capabilities are also disabled in stateless mode, because the server cannot make requests.
     /// Defaults to <see langword="false"/>.
     /// </remarks>
     public bool Stateless { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether the server should use a single execution context for the entire session.
+    /// If <see langword="false"/>, handlers like tools get called with the <see cref="ExecutionContext"/>
+    /// belonging to the corresponding HTTP request which can change throughout the MCP session.
+    /// If <see langword="true"/>, handlers will get called with the same <see cref="ExecutionContext"/>
+    /// used to call <see cref="ConfigureSessionOptions" /> and <see cref="RunSessionHandler"/>.
+    /// </summary>
+    /// <remarks>
+    /// Enabling a per-session <see cref="ExecutionContext"/> can be useful for setting <see cref="AsyncLocal{T}"/> variables
+    /// that persist for the entire session, but it prevents you from using IHttpContextAccessor in handlers.
+    /// Defaults to <see langword="false"/>.
+    /// </remarks>
+    public bool PerSessionExecutionContext { get; set; }
 
     /// <summary>
     /// Gets or sets the duration of time the server will wait between any active requests before timing out an MCP session.

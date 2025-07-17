@@ -9,7 +9,7 @@ namespace ModelContextProtocol.Protocol;
 /// <remarks>
 /// See the <see href="https://github.com/modelcontextprotocol/specification/blob/main/schema/">schema</see> for details.
 /// </remarks>
-public class ResourcesCapability
+public sealed class ResourcesCapability
 {
     /// <summary>
     /// Gets or sets whether this server supports subscribing to resource updates.
@@ -103,5 +103,5 @@ public class ResourcesCapability
     /// </para>
     /// </remarks>
     [JsonIgnore]
-    public McpServerPrimitiveCollection<McpServerResource>? ResourceCollection { get; set; }
+    public McpServerResourceCollection? ResourceCollection { get; set; }
 }

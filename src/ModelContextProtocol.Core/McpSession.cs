@@ -29,12 +29,13 @@ internal sealed partial class McpSession : IDisposable
         "mcp.server.operation.duration", "Measures the duration of inbound message processing.", longBuckets: false);
 
     /// <summary>The latest version of the protocol supported by this implementation.</summary>
-    internal const string LatestProtocolVersion = "2025-03-26";
+    internal const string LatestProtocolVersion = "2025-06-18";
 
     /// <summary>All protocol versions supported by this implementation.</summary>
     internal static readonly string[] SupportedProtocolVersions =
     [
         "2024-11-05",
+        "2025-03-26",
         LatestProtocolVersion,
     ];
 
@@ -114,7 +115,16 @@ internal sealed partial class McpSession : IDisposable
                 LogMessageRead(EndpointName, message.GetType().Name);
 
                 // Fire and forget the message handling to avoid blocking the transport.
-                _ = ProcessMessageAsync();
+                if (message.ExecutionContext is null)
+                {
+                    _ = ProcessMessageAsync();
+                }
+                else
+                {
+                    // Flow the execution context from the HTTP request corresponding to this message if provided.
+                    ExecutionContext.Run(message.ExecutionContext, _ => _ = ProcessMessageAsync(), null);
+                }
+
                 async Task ProcessMessageAsync()
                 {
                     JsonRpcMessageWithId? messageWithId = message as JsonRpcMessageWithId;
@@ -273,7 +283,7 @@ internal sealed partial class McpSession : IDisposable
         {
             try
             {
-                if (GetCancelledNotificationParams(notification.Params) is CancelledNotification cn &&
+                if (GetCancelledNotificationParams(notification.Params) is CancelledNotificationParams cn &&
                     _handlingRequests.TryGetValue(cn.RequestId, out var cts))
                 {
                     await cts.CancelAsync().ConfigureAwait(false);
@@ -337,7 +347,7 @@ internal sealed partial class McpSession : IDisposable
             _ = state.Item1.SendMessageAsync(new JsonRpcNotification
             {
                 Method = NotificationMethods.CancelledNotification,
-                Params = JsonSerializer.SerializeToNode(new CancelledNotification { RequestId = state.Item2.Id }, McpJsonUtilities.JsonContext.Default.CancelledNotification),
+                Params = JsonSerializer.SerializeToNode(new CancelledNotificationParams { RequestId = state.Item2.Id }, McpJsonUtilities.JsonContext.Default.CancelledNotificationParams),
                 RelatedTransport = state.Item2.RelatedTransport,
             });
         }, Tuple.Create(this, request));
@@ -495,7 +505,7 @@ internal sealed partial class McpSession : IDisposable
             // server won't be sending a response, or per the specification, the response should be ignored. There are inherent
             // race conditions here, so it's possible and allowed for the operation to complete before we get to this point.
             if (message is JsonRpcNotification { Method: NotificationMethods.CancelledNotification } notification &&
-                GetCancelledNotificationParams(notification.Params) is CancelledNotification cn &&
+                GetCancelledNotificationParams(notification.Params) is CancelledNotificationParams cn &&
                 _pendingRequests.TryRemove(cn.RequestId, out var tcs))
             {
                 tcs.TrySetCanceled(default);
@@ -518,11 +528,11 @@ internal sealed partial class McpSession : IDisposable
     private Task SendToRelatedTransportAsync(JsonRpcMessage message, CancellationToken cancellationToken)
         => (message.RelatedTransport ?? _transport).SendMessageAsync(message, cancellationToken);
 
-    private static CancelledNotification? GetCancelledNotificationParams(JsonNode? notificationParams)
+    private static CancelledNotificationParams? GetCancelledNotificationParams(JsonNode? notificationParams)
     {
         try
         {
-            return JsonSerializer.Deserialize(notificationParams, McpJsonUtilities.JsonContext.Default.CancelledNotification);
+            return JsonSerializer.Deserialize(notificationParams, McpJsonUtilities.JsonContext.Default.CancelledNotificationParams);
         }
         catch
         {
@@ -608,9 +618,9 @@ internal sealed partial class McpSession : IDisposable
             e = ae.InnerException;
         }
 
-        int? intErrorCode = 
+        int? intErrorCode =
             (int?)((e as McpException)?.ErrorCode) is int errorCode ? errorCode :
-            e is JsonException ? (int)McpErrorCode.ParseError : 
+            e is JsonException ? (int)McpErrorCode.ParseError :
             null;
 
         string? errorType = intErrorCode?.ToString() ?? e.GetType().FullName;

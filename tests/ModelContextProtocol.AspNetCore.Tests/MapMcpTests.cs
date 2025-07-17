@@ -31,9 +31,9 @@ public abstract class MapMcpTests(ITestOutputHelper testOutputHelper) : KestrelI
         // Default behavior when no options are provided
         path ??= UseStreamableHttp ? "/" : "/sse";
 
-        await using var transport = new SseClientTransport(transportOptions ?? new SseClientTransportOptions()
+        await using var transport = new SseClientTransport(transportOptions ?? new SseClientTransportOptions
         {
-            Endpoint = new Uri($"http://localhost{path}"),
+            Endpoint = new Uri($"http://localhost:5000{path}"),
             TransportMode = UseStreamableHttp ? HttpTransportMode.StreamableHttp : HttpTransportMode.Sse,
         }, HttpClient, LoggerFactory);
 
@@ -52,12 +52,6 @@ public abstract class MapMcpTests(ITestOutputHelper testOutputHelper) : KestrelI
     [Fact]
     public async Task Can_UseIHttpContextAccessor_InTool()
     {
-        Assert.SkipWhen(UseStreamableHttp && !Stateless,
-            """
-            IHttpContextAccessor is not currently supported with non-stateless Streamable HTTP.
-            TODO: Support it in stateless mode by manually capturing and flowing execution context.
-            """);
-
         Builder.Services.AddMcpServer().WithHttpTransport(ConfigureStateless).WithTools<EchoHttpContextUserTools>();
 
         Builder.Services.AddHttpContextAccessor();
@@ -80,11 +74,11 @@ public abstract class MapMcpTests(ITestOutputHelper testOutputHelper) : KestrelI
         await using var mcpClient = await ConnectAsync();
 
         var response = await mcpClient.CallToolAsync(
-            "EchoWithUserName",
+            "echo_with_user_name",
             new Dictionary<string, object?>() { ["message"] = "Hello world!" },
             cancellationToken: TestContext.Current.CancellationToken);
 
-        var content = Assert.Single(response.Content);
+        var content = Assert.Single(response.Content.OfType<TextContentBlock>());
         Assert.Equal("TestUser: Hello world!", content.Text);
     }
 
@@ -149,19 +143,14 @@ public abstract class MapMcpTests(ITestOutputHelper testOutputHelper) : KestrelI
                         Assert.NotNull(parameters?.Messages);
                         var message = Assert.Single(parameters.Messages);
                         Assert.Equal(Role.User, message.Role);
-                        Assert.Equal("text", message.Content.Type);
-                        Assert.Equal("Test prompt for sampling", message.Content.Text);
+                        Assert.Equal("Test prompt for sampling", Assert.IsType<TextContentBlock>(message.Content).Text);
 
                         sampleCount++;
                         return new CreateMessageResult
                         {
                             Model = "test-model",
                             Role = Role.Assistant,
-                            Content = new Content
-                            {
-                                Type = "text",
-                                Text = "Sampling response from client"
-                            }
+                            Content = new TextContentBlock { Text = "Sampling response from client" },
                         };
                     },
                 },
@@ -176,10 +165,10 @@ public abstract class MapMcpTests(ITestOutputHelper testOutputHelper) : KestrelI
         }, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(result);
-        Assert.False(result.IsError);
+        Assert.Null(result.IsError);
         var textContent = Assert.Single(result.Content);
         Assert.Equal("text", textContent.Type);
-        Assert.Equal("Sampling completed successfully. Client responded: Sampling response from client", textContent.Text);
+        Assert.Equal("Sampling completed successfully. Client responded: Sampling response from client", Assert.IsType<TextContentBlock>(textContent).Text);
 
         Assert.Equal(2, sampleCount);
 
@@ -200,7 +189,7 @@ public abstract class MapMcpTests(ITestOutputHelper testOutputHelper) : KestrelI
             "TestAuthType", "name", "role"));
 
     [McpServerToolType]
-    private class EchoHttpContextUserTools(IHttpContextAccessor contextAccessor)
+    protected class EchoHttpContextUserTools(IHttpContextAccessor contextAccessor)
     {
         [McpServerTool, Description("Echoes the input back to the client with their user name.")]
         public string EchoWithUserName(string message)
@@ -228,11 +217,7 @@ public abstract class MapMcpTests(ITestOutputHelper testOutputHelper) : KestrelI
                     new SamplingMessage
                     {
                         Role = Role.User,
-                        Content = new Content
-                        {
-                            Type = "text",
-                            Text = prompt
-                        },
+                        Content = new TextContentBlock { Text = prompt },
                     }
                 ],
             };
@@ -240,7 +225,7 @@ public abstract class MapMcpTests(ITestOutputHelper testOutputHelper) : KestrelI
             await server.SampleAsync(samplingRequest, cancellationToken);
             var samplingResult = await server.SampleAsync(samplingRequest, cancellationToken);
 
-            return $"Sampling completed successfully. Client responded: {samplingResult.Content.Text}";
+            return $"Sampling completed successfully. Client responded: {Assert.IsType<TextContentBlock>(samplingResult.Content).Text}";
         }
     }
 }

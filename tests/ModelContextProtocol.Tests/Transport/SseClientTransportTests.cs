@@ -35,7 +35,7 @@ public class SseClientTransportTests : LoggedTest
     [Fact]
     public void Constructor_Throws_For_Null_HttpClient()
     {
-        var exception = Assert.Throws<ArgumentNullException>(() => new SseClientTransport(_transportOptions, null!, LoggerFactory));
+        var exception = Assert.Throws<ArgumentNullException>(() => new SseClientTransport(_transportOptions, httpClient: null!, LoggerFactory));
         Assert.Equal("httpClient", exception.ParamName);
     }
 
@@ -116,7 +116,7 @@ public class SseClientTransportTests : LoggedTest
         };
 
         await using var session = await transport.ConnectAsync(TestContext.Current.CancellationToken);
-        await session.SendMessageAsync(new JsonRpcRequest() { Method = RequestMethods.Initialize, Id = new RequestId(44) }, CancellationToken.None);
+        await session.SendMessageAsync(new JsonRpcRequest { Method = RequestMethods.Initialize, Id = new RequestId(44) }, CancellationToken.None);
         Assert.True(true);
     }
 

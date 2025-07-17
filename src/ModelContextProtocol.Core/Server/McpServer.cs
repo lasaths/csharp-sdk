@@ -228,7 +228,7 @@ internal sealed class McpServer : McpEndpoint, IMcpServer
         var unsubscribeHandler = resourcesCapability.UnsubscribeFromResourcesHandler ?? (static async (_, __) => new EmptyResult());
         var resources = resourcesCapability.ResourceCollection;
         var listChanged = resourcesCapability.ListChanged;
-        var subcribe = resourcesCapability.Subscribe;
+        var subscribe = resourcesCapability.Subscribe;
 
         // Handle resources provided via DI.
         if (resources is { IsEmpty: false })
@@ -242,7 +242,13 @@ internal sealed class McpServer : McpEndpoint, IMcpServer
 
                 if (request.Params?.Cursor is null)
                 {
-                    result.Resources.AddRange(resources.Select(t => t.ProtocolResource).OfType<Resource>());
+                    foreach (var r in resources)
+                    {
+                        if (r.ProtocolResource is { } resource)
+                        {
+                            result.Resources.Add(resource);
+                        }
+                    }
                 }
 
                 return result;
@@ -257,7 +263,13 @@ internal sealed class McpServer : McpEndpoint, IMcpServer
 
                 if (request.Params?.Cursor is null)
                 {
-                    result.ResourceTemplates.AddRange(resources.Where(t => t.IsTemplated).Select(t => t.ProtocolResourceTemplate));
+                    foreach (var rt in resources)
+                    {
+                        if (rt.IsTemplated)
+                        {
+                            result.ResourceTemplates.Add(rt.ProtocolResourceTemplate);
+                        }
+                    }
                 }
 
                 return result;
@@ -297,7 +309,7 @@ internal sealed class McpServer : McpEndpoint, IMcpServer
             listChanged = true;
 
             // TODO: Implement subscribe/unsubscribe logic for resource and resource template collections.
-            // subcribe = true;
+            // subscribe = true;
         }
 
         ServerCapabilities.Resources.ListResourcesHandler = listResourcesHandler;
@@ -307,7 +319,7 @@ internal sealed class McpServer : McpEndpoint, IMcpServer
         ServerCapabilities.Resources.SubscribeToResourcesHandler = subscribeHandler;
         ServerCapabilities.Resources.UnsubscribeFromResourcesHandler = unsubscribeHandler;
         ServerCapabilities.Resources.ListChanged = listChanged;
-        ServerCapabilities.Resources.Subscribe = subcribe;
+        ServerCapabilities.Resources.Subscribe = subscribe;
 
         SetHandler(
             RequestMethods.ResourcesList,
@@ -366,7 +378,10 @@ internal sealed class McpServer : McpEndpoint, IMcpServer
 
                 if (request.Params?.Cursor is null)
                 {
-                    result.Prompts.AddRange(prompts.Select(t => t.ProtocolPrompt));
+                    foreach (var p in prompts)
+                    {
+                        result.Prompts.Add(p.ProtocolPrompt);
+                    }
                 }
 
                 return result;
@@ -431,7 +446,10 @@ internal sealed class McpServer : McpEndpoint, IMcpServer
 
                 if (request.Params?.Cursor is null)
                 {
-                    result.Tools.AddRange(tools.Select(t => t.ProtocolTool));
+                    foreach (var t in tools)
+                    {
+                        result.Tools.Add(t.ProtocolTool);
+                    }
                 }
 
                 return result;
@@ -467,7 +485,7 @@ internal sealed class McpServer : McpEndpoint, IMcpServer
             RequestMethods.ToolsCall,
             callToolHandler,
             McpJsonUtilities.JsonContext.Default.CallToolRequestParams,
-            McpJsonUtilities.JsonContext.Default.CallToolResponse);
+            McpJsonUtilities.JsonContext.Default.CallToolResult);
     }
 
     private void ConfigureLogging(McpServerOptions options)

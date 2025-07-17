@@ -2,6 +2,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Protocol;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
 
@@ -57,8 +58,8 @@ internal sealed class AIFunctionMcpServerPrompt : McpServerPrompt
         return Create(
             AIFunctionFactory.Create(method, args =>
             {
-                var request = (RequestContext<GetPromptRequestParams>)args.Context![typeof(RequestContext<GetPromptRequestParams>)]!;
-                return createTargetFunc(request);
+                Debug.Assert(args.Services is RequestServiceProvider<GetPromptRequestParams>, $"The service provider should be a {nameof(RequestServiceProvider<GetPromptRequestParams>)} for this method to work correctly.");
+                return createTargetFunc(((RequestServiceProvider<GetPromptRequestParams>)args.Services!).Request);
             }, CreateAIFunctionFactoryOptions(method, options)),
             options);
     }
@@ -67,61 +68,22 @@ internal sealed class AIFunctionMcpServerPrompt : McpServerPrompt
         MethodInfo method, McpServerPromptCreateOptions? options) =>
         new()
         {
-            Name = options?.Name ?? method.GetCustomAttribute<McpServerPromptAttribute>()?.Name,
+            Name = options?.Name ?? method.GetCustomAttribute<McpServerPromptAttribute>()?.Name ?? AIFunctionMcpServerTool.DeriveName(method),
             Description = options?.Description,
             MarshalResult = static (result, _, cancellationToken) => new ValueTask<object?>(result),
             SerializerOptions = options?.SerializerOptions ?? McpJsonUtilities.DefaultOptions,
             JsonSchemaCreateOptions = options?.SchemaCreateOptions,
             ConfigureParameterBinding = pi =>
             {
-                if (pi.ParameterType == typeof(RequestContext<GetPromptRequestParams>))
-                {
-                    return new()
-                    {
-                        ExcludeFromSchema = true,
-                        BindParameter = (pi, args) => GetRequestContext(args),
-                    };
-                }
-
-                if (pi.ParameterType == typeof(IMcpServer))
-                {
-                    return new()
-                    {
-                        ExcludeFromSchema = true,
-                        BindParameter = (pi, args) => GetRequestContext(args)?.Server,
-                    };
-                }
-
-                if (pi.ParameterType == typeof(IProgress<ProgressNotificationValue>))
-                {
-                    // Bind IProgress<ProgressNotificationValue> to the progress token in the request,
-                    // if there is one. If we can't get one, return a nop progress.
-                    return new()
-                    {
-                        ExcludeFromSchema = true,
-                        BindParameter = (pi, args) =>
-                        {
-                            var requestContent = GetRequestContext(args);
-                            if (requestContent?.Server is { } server &&
-                                requestContent?.Params?.Meta?.ProgressToken is { } progressToken)
-                            {
-                                return new TokenProgress(server, progressToken);
-                            }
-
-                            return NullProgress.Instance;
-                        },
-                    };
-                }
-
-                if (options?.Services is { } services &&
-                    services.GetService<IServiceProviderIsService>() is { } ispis &&
-                    ispis.IsService(pi.ParameterType))
+                if (RequestServiceProvider<GetPromptRequestParams>.IsAugmentedWith(pi.ParameterType) ||
+                    (options?.Services?.GetService<IServiceProviderIsService>() is { } ispis &&
+                     ispis.IsService(pi.ParameterType)))
                 {
                     return new()
                     {
                         ExcludeFromSchema = true,
                         BindParameter = (pi, args) =>
-                            GetRequestContext(args)?.Services?.GetService(pi.ParameterType) ??
+                            args.Services?.GetService(pi.ParameterType) ??
                             (pi.HasDefaultValue ? null :
                              throw new ArgumentException("No service of the requested type was found.")),
                     };
@@ -133,24 +95,13 @@ internal sealed class AIFunctionMcpServerPrompt : McpServerPrompt
                     {
                         ExcludeFromSchema = true,
                         BindParameter = (pi, args) =>
-                            (GetRequestContext(args)?.Services as IKeyedServiceProvider)?.GetKeyedService(pi.ParameterType, keyedAttr.Key) ??
+                            (args?.Services as IKeyedServiceProvider)?.GetKeyedService(pi.ParameterType, keyedAttr.Key) ??
                             (pi.HasDefaultValue ? null :
                              throw new ArgumentException("No service of the requested type was found.")),
                     };
                 }
 
                 return default;
-
-                static RequestContext<GetPromptRequestParams>? GetRequestContext(AIFunctionArguments args)
-                {
-                    if (args.Context?.TryGetValue(typeof(RequestContext<GetPromptRequestParams>), out var orc) is true &&
-                        orc is RequestContext<GetPromptRequestParams> requestContext)
-                    {
-                        return requestContext;
-                    }
-
-                    return null;
-                }
             },
         };
 
@@ -180,6 +131,7 @@ internal sealed class AIFunctionMcpServerPrompt : McpServerPrompt
         Prompt prompt = new()
         {
             Name = options?.Name ?? function.Name,
+            Title = options?.Title,
             Description = options?.Description ?? function.Description,
             Arguments = args,
         };
@@ -194,6 +146,7 @@ internal sealed class AIFunctionMcpServerPrompt : McpServerPrompt
         if (method.GetCustomAttribute<McpServerPromptAttribute>() is { } promptAttr)
         {
             newOptions.Name ??= promptAttr.Name;
+            newOptions.Title ??= promptAttr.Title;
         }
 
         if (method.GetCustomAttribute<DescriptionAttribute>() is { } descAttr)
@@ -224,14 +177,10 @@ internal sealed class AIFunctionMcpServerPrompt : McpServerPrompt
         Throw.IfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
 
-        AIFunctionArguments arguments = new()
-        {
-            Services = request.Services,
-            Context = new Dictionary<object, object?>() { [typeof(RequestContext<GetPromptRequestParams>)] = request }
-        };
+        request.Services = new RequestServiceProvider<GetPromptRequestParams>(request, request.Services);
+        AIFunctionArguments arguments = new() { Services = request.Services };
 
-        var argDict = request.Params?.Arguments;
-        if (argDict is not null)
+        if (request.Params?.Arguments is { } argDict)
         {
             foreach (var kvp in argDict)
             {
@@ -248,7 +197,7 @@ internal sealed class AIFunctionMcpServerPrompt : McpServerPrompt
             string text => new()
             {
                 Description = ProtocolPrompt.Description,
-                Messages = [new() { Role = Role.User, Content = new() { Text = text, Type = "text" } }],
+                Messages = [new() { Role = Role.User, Content = new TextContentBlock { Text = text } }],
             },
 
             PromptMessage promptMessage => new()

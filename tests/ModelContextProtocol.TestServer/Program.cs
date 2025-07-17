@@ -38,7 +38,7 @@ internal static class Program
 
         McpServerOptions options = new()
         {
-            Capabilities = new ServerCapabilities()
+            Capabilities = new ServerCapabilities
             {
                 Tools = ConfigureTools(),
                 Resources = ConfigureResources(),
@@ -75,7 +75,7 @@ internal static class Program
                 if (_minimumLoggingLevel is not null)
                 {
                     var logLevel = loggingLevels[random.Next(loggingLevels.Length)];
-                    await server.SendMessageAsync(new JsonRpcNotification()
+                    await server.SendMessageAsync(new JsonRpcNotification
                     {
                         Method = NotificationMethods.LoggingMessageNotification,
                         Params = JsonSerializer.SerializeToNode(new LoggingMessageNotificationParams
@@ -111,11 +111,11 @@ internal static class Program
         {
             ListToolsHandler = async (request, cancellationToken) =>
             {
-                return new ListToolsResult()
+                return new ListToolsResult
                 {
                     Tools =
                     [
-                        new Tool()
+                        new Tool
                         {
                             Name = "echo",
                             Description = "Echoes the input back to the client.",
@@ -132,7 +132,7 @@ internal static class Program
                                 }
                                 """),
                         },
-                        new Tool()
+                        new Tool
                         {
                             Name = "echoSessionId",
                             Description = "Echoes the session id back to the client.",
@@ -142,7 +142,7 @@ internal static class Program
                                 }
                                 """, McpJsonUtilities.DefaultOptions),
                         },
-                        new Tool()
+                        new Tool
                         {
                             Name = "sampleLLM",
                             Description = "Samples from an LLM using MCP's sampling feature.",
@@ -175,16 +175,16 @@ internal static class Program
                     {
                         throw new McpException("Missing required argument 'message'", McpErrorCode.InvalidParams);
                     }
-                    return new CallToolResponse()
+                    return new CallToolResult
                     {
-                        Content = [new Content() { Text = "Echo: " + message.ToString(), Type = "text" }]
+                        Content = [new TextContentBlock { Text = $"Echo: {message}" }]
                     };
                 }
                 else if (request.Params?.Name == "echoSessionId")
                 {
-                    return new CallToolResponse()
+                    return new CallToolResult
                     {
-                        Content = [new Content() { Text = request.Server.SessionId, Type = "text" }]
+                        Content = [new TextContentBlock { Text = request.Server.SessionId ?? string.Empty }]
                     };
                 }
                 else if (request.Params?.Name == "sampleLLM")
@@ -198,9 +198,9 @@ internal static class Program
                     var sampleResult = await request.Server.SampleAsync(CreateRequestSamplingParams(prompt.ToString(), "sampleLLM", Convert.ToInt32(maxTokens.GetRawText())),
                         cancellationToken);
 
-                    return new CallToolResponse()
+                    return new CallToolResult
                     {
-                        Content = [new Content() { Text = $"LLM sampling result: {sampleResult.Content.Text}", Type = "text" }]
+                        Content = [new TextContentBlock { Text = $"LLM sampling result: {(sampleResult.Content as TextContentBlock)?.Text}" }]
                     };
                 }
                 else
@@ -217,27 +217,27 @@ internal static class Program
         {
             ListPromptsHandler = async (request, cancellationToken) =>
             {
-                return new ListPromptsResult()
+                return new ListPromptsResult
                 {
                     Prompts = [
-                        new Prompt()
+                        new Prompt
                         {
                             Name = "simple_prompt",
                             Description = "A prompt without arguments"
                         },
-                        new Prompt()
+                        new Prompt
                         {
                             Name = "complex_prompt",
                             Description = "A prompt with arguments",
                             Arguments =
                             [
-                                new PromptArgument()
+                                new PromptArgument
                                 {
                                     Name = "temperature",
                                     Description = "Temperature setting",
                                     Required = true
                                 },
-                                new PromptArgument()
+                                new PromptArgument
                                 {
                                     Name = "style",
                                     Description = "Output style",
@@ -254,44 +254,31 @@ internal static class Program
                 List<PromptMessage> messages = [];
                 if (request.Params?.Name == "simple_prompt")
                 {
-                    messages.Add(new PromptMessage()
+                    messages.Add(new PromptMessage
                     {
                         Role = Role.User,
-                        Content = new Content()
-                        {
-                            Type = "text",
-                            Text = "This is a simple prompt without arguments."
-                        }
+                        Content = new TextContentBlock { Text = "This is a simple prompt without arguments." },
                     });
                 }
                 else if (request.Params?.Name == "complex_prompt")
                 {
                     string temperature = request.Params.Arguments?["temperature"].ToString() ?? "unknown";
                     string style = request.Params.Arguments?["style"].ToString() ?? "unknown";
-                    messages.Add(new PromptMessage()
+                    messages.Add(new PromptMessage
                     {
                         Role = Role.User,
-                        Content = new Content()
-                        {
-                            Type = "text",
-                            Text = $"This is a complex prompt with arguments: temperature={temperature}, style={style}"
-                        }
+                        Content = new TextContentBlock { Text = $"This is a complex prompt with arguments: temperature={temperature}, style={style}" },
                     });
-                    messages.Add(new PromptMessage()
+                    messages.Add(new PromptMessage
                     {
                         Role = Role.Assistant,
-                        Content = new Content()
-                        {
-                            Type = "text",
-                            Text = "I understand. You've provided a complex prompt with temperature and style arguments. How would you like me to proceed?"
-                        }
+                        Content = new TextContentBlock { Text = "I understand. You've provided a complex prompt with temperature and style arguments. How would you like me to proceed?" },
                     });
-                    messages.Add(new PromptMessage()
+                    messages.Add(new PromptMessage
                     {
                         Role = Role.User,
-                        Content = new Content()
+                        Content = new ImageContentBlock
                         {
-                            Type = "image",
                             Data = MCP_TINY_IMAGE,
                             MimeType = "image/png"
                         }
@@ -302,7 +289,7 @@ internal static class Program
                     throw new McpException($"Unknown prompt: {request.Params?.Name}", McpErrorCode.InvalidParams);
                 }
 
-                return new GetPromptResult()
+                return new GetPromptResult
                 {
                     Messages = messages
                 };
@@ -341,13 +328,13 @@ internal static class Program
             string uri = $"test://static/resource/{i + 1}";
             if (i % 2 == 0)
             {
-                resources.Add(new Resource()
+                resources.Add(new Resource
                 {
                     Uri = uri,
                     Name = $"Resource {i + 1}",
                     MimeType = "text/plain"
                 });
-                resourceContents.Add(new TextResourceContents()
+                resourceContents.Add(new TextResourceContents
                 {
                     Uri = uri,
                     MimeType = "text/plain",
@@ -357,13 +344,13 @@ internal static class Program
             else
             {
                 var buffer = Encoding.UTF8.GetBytes($"Resource {i + 1}: This is a base64 blob");
-                resources.Add(new Resource()
+                resources.Add(new Resource
                 {
                     Uri = uri,
                     Name = $"Resource {i + 1}",
                     MimeType = "application/octet-stream"
                 });
-                resourceContents.Add(new BlobResourceContents()
+                resourceContents.Add(new BlobResourceContents
                 {
                     Uri = uri,
                     MimeType = "application/octet-stream",
@@ -378,10 +365,10 @@ internal static class Program
         {
             ListResourceTemplatesHandler = async (request, cancellationToken) =>
             {
-                return new ListResourceTemplatesResult()
+                return new ListResourceTemplatesResult
                 {
                     ResourceTemplates = [
-                        new ResourceTemplate()
+                        new ResourceTemplate
                         {
                             UriTemplate = "test://dynamic/resource/{id}",
                             Name = "Dynamic Resource",
@@ -413,7 +400,7 @@ internal static class Program
                 {
                     nextCursor = Convert.ToBase64String(Encoding.UTF8.GetBytes(endIndex.ToString()));
                 }
-                return new ListResourcesResult()
+                return new ListResourcesResult
                 {
                     NextCursor = nextCursor,
                     Resources = resources.GetRange(startIndex, endIndex - startIndex)
@@ -435,10 +422,10 @@ internal static class Program
                         throw new McpException($"Invalid resource URI: '{request.Params.Uri}'", McpErrorCode.InvalidParams);
                     }
 
-                    return new ReadResourceResult()
+                    return new ReadResourceResult
                     {
                         Contents = [
-                            new TextResourceContents()
+                            new TextResourceContents
                             {
                                 Uri = request.Params.Uri,
                                 MimeType = "text/plain",
@@ -451,7 +438,7 @@ internal static class Program
                 ResourceContents contents = resourceContents.FirstOrDefault(r => r.Uri == request.Params.Uri)
                     ?? throw new McpException($"Resource not found: '{request.Params.Uri}'", McpErrorCode.InvalidParams);
 
-                return new ReadResourceResult()
+                return new ReadResourceResult
                 {
                     Contents = [contents]
                 };
@@ -506,29 +493,29 @@ internal static class Program
 
         Func<RequestContext<CompleteRequestParams>, CancellationToken, ValueTask<CompleteResult>> handler = async (request, cancellationToken) =>
         {
-            if (request.Params?.Ref?.Type == "ref/resource")
+            string[]? values;
+            switch (request.Params?.Ref)
             {
-                var resourceId = request.Params?.Ref?.Uri?.Split('/').LastOrDefault();
-                if (string.IsNullOrEmpty(resourceId))
-                    return new CompleteResult() { Completion = new() { Values = [] } };
+                case ResourceTemplateReference rtr:
+                    var resourceId = rtr.Uri?.Split('/').LastOrDefault();
+                    if (string.IsNullOrEmpty(resourceId))
+                        return new CompleteResult { Completion = new() { Values = [] } };
 
-                // Filter resource IDs that start with the input value
-                var values = sampleResourceIds.Where(id => id.StartsWith(request.Params!.Argument.Value)).ToArray();
-                return new CompleteResult() { Completion = new() { Values = values, HasMore = false, Total = values.Length } };
+                    // Filter resource IDs that start with the input value
+                    values = sampleResourceIds.Where(id => id.StartsWith(request.Params!.Argument.Value)).ToArray();
+                    return new CompleteResult { Completion = new() { Values = values, HasMore = false, Total = values.Length } };
 
+                case PromptReference pr:
+                    // Handle completion for prompt arguments
+                    if (!exampleCompletions.TryGetValue(request.Params.Argument.Name, out var completions))
+                        return new CompleteResult { Completion = new() { Values = [] } };
+
+                    values = completions.Where(value => value.StartsWith(request.Params.Argument.Value)).ToArray();
+                    return new CompleteResult { Completion = new() { Values = values, HasMore = false, Total = values.Length } };
+
+                default:
+                    throw new McpException($"Unknown reference type: '{request.Params?.Ref.Type}'", McpErrorCode.InvalidParams);
             }
-
-            if (request.Params?.Ref?.Type == "ref/prompt")
-            {
-                // Handle completion for prompt arguments
-                if (!exampleCompletions.TryGetValue(request.Params.Argument.Name, out var completions))
-                    return new CompleteResult() { Completion = new() { Values = [] } };
-
-                var values = completions.Where(value => value.StartsWith(request.Params.Argument.Value)).ToArray();
-                return new CompleteResult() { Completion = new() { Values = values, HasMore = false, Total = values.Length } };
-            }
-
-            throw new McpException($"Unknown reference type: '{request.Params?.Ref.Type}'", McpErrorCode.InvalidParams);
         };
 
         return new() { CompleteHandler = handler };
@@ -536,16 +523,12 @@ internal static class Program
 
     static CreateMessageRequestParams CreateRequestSamplingParams(string context, string uri, int maxTokens = 100)
     {
-        return new CreateMessageRequestParams()
+        return new CreateMessageRequestParams
         {
-            Messages = [new SamplingMessage()
+            Messages = [new SamplingMessage
                 {
                     Role = Role.User,
-                    Content = new Content()
-                    {
-                        Type = "text",
-                        Text = $"Resource {uri} context: {context}"
-                    }
+                    Content = new TextContentBlock { Text = $"Resource {uri} context: {context}" },
                 }],
             SystemPrompt = "You are a helpful test server.",
             MaxTokens = maxTokens,
